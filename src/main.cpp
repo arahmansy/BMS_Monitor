@@ -2,10 +2,12 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <ElegantOTA.h>
+
 
 // ======== WIFI CONFIG ========
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+const char* ssid = "jojo2024";
+const char* password = "rahafsara@@$$321";
 
 // ======== MQTT CONFIG ========
 const char* mqtt_server = "broker.hivemq.com";
@@ -21,6 +23,10 @@ const char* mqtt_topic = "adnansy/bms/status/info";
 #define BAUD 9600
 #define INTERVAL 10000UL   // 10 seconds
 uint8_t CMD_BMS[] = {0x7E, 0x32, 0x35, 0x30, 0x31, 0x34, 0x36, 0x34, 0x32, 0x45, 0x30, 0x30, 0x32, 0x30, 0x31, 0x46, 0x44, 0x33, 0x30, 0x0D};
+
+
+
+WebServer server(80);
 
 // ======== GLOBALS ========
 WiFiClient espClient;
@@ -156,10 +162,19 @@ void parseAndPublish(uint8_t *p, size_t len) {
 
 // ======== SETUP ========
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
   RS485.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
+
+server.on("/", []() {
+    server.send(200, "text/plain", "Hi! This is ElegantOTA Demo.");
+  });
+ 
+  ElegantOTA.begin(&server);    // Start ElegantOTA
+  server.begin();
+  Serial.println("HTTP server started");
+
 }
 
 // ======== LOOP ========
@@ -186,4 +201,9 @@ void loop() {
       Serial.println("[WARN] No response from BMS.");
     }
   }
+
+server.handleClient();
+  ElegantOTA.loop();
+  
+
 }
