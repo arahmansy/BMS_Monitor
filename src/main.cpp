@@ -4,89 +4,129 @@
 #include <ArduinoJson.h>
 #include <ElegantOTA.h>
 
-
 // ======== WIFI CONFIG ========
-const char* ssid = "jojo2024";
-const char* password = "rahafsara@@$$321";
+const char *ssid = "Test";
+const char *password = "123456789";
 
 // ======== MQTT CONFIG ========
-const char* mqtt_server = "broker.hivemq.com";
+const char *mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
-const char* mqtt_user = "user1";
-const char* mqtt_pass = "Admin123";
-const char* mqtt_topic = "adnansy/bms/status/info";
+const char *mqtt_client_id = "ESP32_BMS";
+const char *mqtt_topic = "adnansy/bms/status/info";
+const char *mqtt_topic_state = "adnansy/bms/status/state"; // online/offline
+
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+void mqtt_connect()
+{
+  while (!client.connected())
+  {
+    //Serial.print("[MQTT] Connecting...");
+    if (client.connect(mqtt_client_id, nullptr, nullptr,
+                       mqtt_topic_state, 0, true, "offline"))
+    {
+     // Serial.println(" connected!");
+      client.publish(mqtt_topic_state, "online", true);
+    }
+    else
+    {
+     // Serial.print(" failed (rc=");
+     // Serial.print(client.state());
+     // Serial.println(") retrying in 3s");
+      delay(3000);
+    }
+  }
+}
 
 // ======== SERIAL CONFIG ========
-#define RX_PIN 16   // Connect to BMS TX
-#define TX_PIN 17   // Connect to BMS RX
+#define RX_PIN 16 // Connect to BMS TX
+#define TX_PIN 17 // Connect to BMS RX
 #define RS485 Serial2
 #define BAUD 9600
-#define INTERVAL 10000UL   // 10 seconds
+#define INTERVAL 10000UL // 10 seconds
 uint8_t CMD_BMS[] = {0x7E, 0x32, 0x35, 0x30, 0x31, 0x34, 0x36, 0x34, 0x32, 0x45, 0x30, 0x30, 0x32, 0x30, 0x31, 0x46, 0x44, 0x33, 0x30, 0x0D};
-
-
 
 WebServer server(80);
 
 // ======== GLOBALS ========
-WiFiClient espClient;
-PubSubClient client(espClient);
+
+
 unsigned long lastRead = 0;
 
 // ======== WIFI + MQTT ========
-void setup_wifi() {
-  Serial.println("\nConnecting to WiFi...");
+void setup_wifi()
+{
+  //Serial.println("\nConnecting to WiFi...");
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED)
+  {
     delay(500);
-    Serial.print(".");
+    //Serial.print(".");
   }
-  Serial.println("\n[WiFi] Connected!");
-  Serial.print("IP: ");
-  Serial.println(WiFi.localIP());
+  //Serial.println("\n[WiFi] Connected!");
+  //Serial.print("IP: ");
+ // Serial.println(WiFi.localIP());
 }
 
-void reconnect_mqtt() {
-  while (!client.connected()) {
-    Serial.print("[MQTT] Connecting...");
-    if (client.connect("ESP32_BMS", mqtt_user, mqtt_pass)) {
-      Serial.println(" connected.");
-    } else {
-      Serial.print(" failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" retry in 5s...");
+void reconnect_mqtt()
+{
+  while (!client.connected())
+  {
+    //Serial.print("[MQTT] Connecting...");
+
+    if (client.connect("ESP32_BMS"))
+    {
+     // Serial.println(" connected.");
+    }
+    else
+    {
+      //Serial.print(" failed, rc=");
+      //Serial.print(client.state());
+     // Serial.println(" retry in 5s...");
       delay(5000);
     }
   }
 }
 
 // ======== FRAME HELPERS ========
-bool readFrame(uint8_t *buffer, size_t &len) {
+bool readFrame(uint8_t *buffer, size_t &len)
+{
   len = 0;
   bool inFrame = false;
   unsigned long start = millis();
 
-  while (millis() - start < 2000) { // 2s timeout
-    if (RS485.available()) {
-      uint8_t b = RS485.read();
-      if (b == 0x7E && !inFrame) {
+  while (millis() - start < 2000)
+  { // 2s timeout
+    if (Serial.available())
+    {
+      uint8_t b = Serial.read();
+      if (b == 0x7E && !inFrame)
+      {
         len = 0;
         buffer[len++] = b;
         inFrame = true;
-      } else if (inFrame) {
+      }
+      else if (inFrame)
+      {
         buffer[len++] = b;
-        if (b == 0x0D) return true;
-        if (len >= 512) break;
+        if (b == 0x0D)
+          return true;
+        if (len >= 512)
+          break;
       }
     }
   }
   return false;
 }
 
-bool decodeAsciiHex(const uint8_t *raw, size_t len, uint8_t *out, size_t &outlen) {
-  if (len < 3 || raw[0] != 0x7E || raw[len - 1] != 0x0D) return false;
+bool decodeAsciiHex(const uint8_t *raw, size_t len, uint8_t *out, size_t &outlen)
+{
+  if (len < 3 || raw[0] != 0x7E || raw[len - 1] != 0x0D)
+    return false;
   outlen = 0;
-  for (size_t i = 1; i < len - 1; i += 2) {
+  for (size_t i = 1; i < len - 1; i += 2)
+  {
     char hi = raw[i];
     char lo = raw[i + 1];
     uint8_t val = (uint8_t)((strtol((String(hi) + String(lo)).c_str(), NULL, 16)) & 0xFF);
@@ -96,8 +136,10 @@ bool decodeAsciiHex(const uint8_t *raw, size_t len, uint8_t *out, size_t &outlen
 }
 
 // ======== PARSER ========
-void parseAndPublish(uint8_t *p, size_t len) {
-  if (len < 20) return;
+void parseAndPublish(uint8_t *p, size_t len)
+{
+  if (len < 20)
+    return;
   size_t idx = 0;
 
   uint8_t VER = p[idx++], ADR = p[idx++], CID1 = p[idx++], RTN = p[idx++];
@@ -107,14 +149,16 @@ void parseAndPublish(uint8_t *p, size_t len) {
   uint8_t cell_count = p[idx++];
 
   float cells[24];
-  for (int i = 0; i < cell_count && idx + 1 < len; i++) {
+  for (int i = 0; i < cell_count && idx + 1 < len; i++)
+  {
     uint16_t mv = (p[idx++] << 8) | p[idx++];
     cells[i] = mv / 1000.0;
   }
 
   uint8_t temp_count = p[idx++];
   float temps[8];
-  for (int i = 0; i < temp_count && idx + 1 < len; i++) {
+  for (int i = 0; i < temp_count && idx + 1 < len; i++)
+  {
     uint16_t rawt = (p[idx++] << 8) | p[idx++];
     temps[i] = (rawt / 10.0) - 273.15;
   }
@@ -145,65 +189,101 @@ void parseAndPublish(uint8_t *p, size_t len) {
   doc["design_Ah"] = design_Ah;
 
   JsonArray arrCells = doc.createNestedArray("cells");
-  for (int i = 0; i < cell_count; i++) arrCells.add(cells[i]);
+  for (int i = 0; i < cell_count; i++)
+    arrCells.add(cells[i]);
 
   JsonArray arrTemps = doc.createNestedArray("temps");
-  for (int i = 0; i < temp_count; i++) arrTemps.add(temps[i]);
+  for (int i = 0; i < temp_count; i++)
+    arrTemps.add(temps[i]);
 
   char jsonBuffer[512];
   size_t n = serializeJson(doc, jsonBuffer);
 
-  Serial.println("[DATA]");
-  Serial.println(jsonBuffer);
+  //Serial.println("[DATA]");
+  //Serial.println(jsonBuffer);
 
-  client.publish(mqtt_topic, jsonBuffer, n);
-  Serial.println("[MQTT] Published");
+  mqtt_connect();
+  //Serial.println("[MQTT] Publishing...");
+
+  bool ok = client.publish(mqtt_topic, jsonBuffer, n);
+  //Serial.println(ok ? "[MQTT] Sent OK ✅" : "[MQTT] Send failed ❌");
+  // if (client.publish(mqtt_topic, jsonBuffer, n))
+  // {
+  //   Serial.println("[MQTT] Sent successfully.");
+  // }
+  // else
+  // {
+  //   Serial.println("[MQTT] Send failed!");
+  // }
+
+ // Serial.print("Topic: ");
+  //Serial.println(mqtt_topic);
+  //Serial.println(jsonBuffer);
 }
 
 // ======== SETUP ========
-void setup() {
+void setup()
+{
   Serial.begin(9600);
   RS485.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
+  client.setBufferSize(1024);
 
-server.on("/", []() {
-    server.send(200, "text/plain", "Hi! This is ElegantOTA Demo.");
-  });
- 
-  ElegantOTA.begin(&server);    // Start ElegantOTA
+  mqtt_connect();
+  server.on("/", []()
+            { server.send(200, "text/plain", "Hi! This is ElegantOTA Demo."); });
+
+  ElegantOTA.begin(&server); // Start ElegantOTA
   server.begin();
-  Serial.println("HTTP server started");
+ // Serial.println("HTTP server started");
+  mqtt_connect();
 
+  //Serial.println("[MQTT] Publishing...");
+  if (client.publish(mqtt_topic, "Started"))
+  {
+    ///Serial.println("[MQTT] Sent successfully.");
+  }
+  else
+  {
+   // Serial.println("[MQTT] Send failed!");
+  }
 }
 
 // ======== LOOP ========
-void loop() {
-  if (!client.connected()) reconnect_mqtt();
+void loop()
+{
+  if (!client.connected())
+    mqtt_connect();
   client.loop();
 
-  if (millis() - lastRead > INTERVAL) {
+  if (millis() - lastRead > INTERVAL)
+  {
     lastRead = millis();
-    RS485.write(CMD_BMS, sizeof(CMD_BMS));
-    RS485.flush();
+    Serial.write(CMD_BMS, sizeof(CMD_BMS));
+    Serial.flush();
 
     uint8_t frame[512];
     size_t framelen;
-    if (readFrame(frame, framelen)) {
+    if (readFrame(frame, framelen))
+    {
       uint8_t payload[256];
       size_t paylen;
-      if (decodeAsciiHex(frame, framelen, payload, paylen)) {
+      if (decodeAsciiHex(frame, framelen, payload, paylen))
+      {
         parseAndPublish(payload, paylen);
-      } else {
-        Serial.println("[WARN] Invalid ASCII frame.");
       }
-    } else {
-      Serial.println("[WARN] No response from BMS.");
+      else
+      {
+        //Serial.println("[WARN] Invalid ASCII frame.");
+      }
+    }
+    else
+    {
+      //Serial.println("[WARN] No response from BMS.");
     }
   }
 
-server.handleClient();
+  server.handleClient();
   ElegantOTA.loop();
-  
-
 }
