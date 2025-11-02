@@ -3,10 +3,12 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ElegantOTA.h>
-
+#include <WiFiManager.h> //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 // ======== WIFI CONFIG ========
+#define TRIGGER_PIN 0
 const char *ssid = "Test";
 const char *password = "123456789";
+WiFiManager wifiManager;
 
 // ======== MQTT CONFIG ========
 const char *mqtt_server = "broker.hivemq.com";
@@ -15,25 +17,24 @@ const char *mqtt_client_id = "ESP32_BMS";
 const char *mqtt_topic = "adnansy/bms/status/info";
 const char *mqtt_topic_state = "adnansy/bms/status/state"; // online/offline
 
-
 WiFiClient espClient;
 PubSubClient client(espClient);
 void mqtt_connect()
 {
   while (!client.connected())
   {
-    //Serial.print("[MQTT] Connecting...");
+    Serial.print("[MQTT] Connecting...");
     if (client.connect(mqtt_client_id, nullptr, nullptr,
                        mqtt_topic_state, 0, true, "offline"))
     {
-     // Serial.println(" connected!");
+      Serial.println(" connected!");
       client.publish(mqtt_topic_state, "online", true);
     }
     else
     {
-     // Serial.print(" failed (rc=");
-     // Serial.print(client.state());
-     // Serial.println(") retrying in 3s");
+       Serial.print(" failed (rc=");
+      Serial.print(client.state());
+       Serial.println(") retrying in 3s");
       delay(3000);
     }
   }
@@ -51,40 +52,74 @@ WebServer server(80);
 
 // ======== GLOBALS ========
 
-
 unsigned long lastRead = 0;
 
-// ======== WIFI + MQTT ========
-void setup_wifi()
+void toggleSRV()
 {
-  //Serial.println("\nConnecting to WiFi...");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    //Serial.print(".");
-  }
-  //Serial.println("\n[WiFi] Connected!");
-  //Serial.print("IP: ");
- // Serial.println(WiFi.localIP());
+  digitalWrite(5, LOW);
+  delay(100);
+  digitalWrite(5, HIGH);
 }
 
-void reconnect_mqtt()
+void toggleSerialLED()
 {
-  while (!client.connected())
-  {
-    //Serial.print("[MQTT] Connecting...");
+  digitalWrite(4, LOW);
+  delay(100);
+  digitalWrite(4, HIGH);
+}
 
-    if (client.connect("ESP32_BMS"))
+
+void pinSetup()
+{
+  pinMode(TRIGGER_PIN, INPUT);
+  pinMode(4, OUTPUT); // ext
+  pinMode(5, OUTPUT); // srv
+  pinMode(2, OUTPUT); // net
+  // pinMode(15, OUTPUT); // RS enable
+  pinMode(14, OUTPUT);   // reset relay
+  pinMode(13, OUTPUT);   // set relay
+  digitalWrite(4, HIGH); // ext
+  digitalWrite(5, HIGH); // srv
+  digitalWrite(2, HIGH); // net
+  digitalWrite(14, LOW);
+  digitalWrite(13, HIGH); //
+}
+
+void checkButton()
+{
+  // check for button press
+  if (digitalRead(TRIGGER_PIN) == LOW)
+  {
+    // poor mans debounce/press-hold, code not ideal for production
+    delay(50);
+    if (digitalRead(TRIGGER_PIN) == LOW)
     {
-     // Serial.println(" connected.");
-    }
-    else
-    {
-      //Serial.print(" failed, rc=");
-      //Serial.print(client.state());
-     // Serial.println(" retry in 5s...");
-      delay(5000);
+      Serial.println("Button Pressed");
+      // still holding button for 3000 ms, reset settings, code not ideaa for production
+      delay(3000); // reset delay hold
+      if (digitalRead(TRIGGER_PIN) == LOW)
+      {
+        Serial.println("Button Held");
+        Serial.println("Erasing Config, restarting");
+        wifiManager.resetSettings();
+        ESP.restart();
+      }
+
+      // start portal w delay
+      Serial.println("Starting config portal");
+      wifiManager.setConfigPortalTimeout(120);
+
+      if (!wifiManager.startConfigPortal("OnDemandAP", "password"))
+      {
+        Serial.println("failed to connect or hit timeout");
+        delay(3000);
+        // ESP.restart();
+      }
+      else
+      {
+        // if you get here you have connected to the WiFi
+        Serial.println("connected...yeey :)");
+      }
     }
   }
 }
@@ -199,36 +234,73 @@ void parseAndPublish(uint8_t *p, size_t len)
   char jsonBuffer[512];
   size_t n = serializeJson(doc, jsonBuffer);
 
-  //Serial.println("[DATA]");
-  //Serial.println(jsonBuffer);
+  // Serial.println("[DATA]");
+  // Serial.println(jsonBuffer);
 
   mqtt_connect();
-  //Serial.println("[MQTT] Publishing...");
+  // Serial.println("[MQTT] Publishing...");
 
   bool ok = client.publish(mqtt_topic, jsonBuffer, n);
-  //Serial.println(ok ? "[MQTT] Sent OK ✅" : "[MQTT] Send failed ❌");
-  // if (client.publish(mqtt_topic, jsonBuffer, n))
-  // {
-  //   Serial.println("[MQTT] Sent successfully.");
-  // }
-  // else
-  // {
-  //   Serial.println("[MQTT] Send failed!");
-  // }
+  // Serial.println(ok ? "[MQTT] Sent OK ✅" : "[MQTT] Send failed ❌");
+  //  if (client.publish(mqtt_topic, jsonBuffer, n))
+  //  {
+  //    Serial.println("[MQTT] Sent successfully.");
+  //  }
+  //  else
+  //  {
+  //    Serial.println("[MQTT] Send failed!");
+  //  }
 
- // Serial.print("Topic: ");
-  //Serial.println(mqtt_topic);
-  //Serial.println(jsonBuffer);
+  // Serial.print("Topic: ");
+  // Serial.println(mqtt_topic);
+  // Serial.println(jsonBuffer);
 }
 
 // ======== SETUP ========
+
+void configModeCallback(WiFiManager *myWiFiManager)
+{
+  Serial.println("Entered config mode");
+  Serial.println(WiFi.softAPIP());
+
+  Serial.println(myWiFiManager->getConfigPortalSSID());
+}
+
+// flag for saving data
+bool shouldSaveConfig = false;
+
+// callback notifying us of the need to save config
+void saveConfigCallback()
+{
+  Serial.println("Should save config");
+  shouldSaveConfig = true;
+}
+
 void setup()
 {
+  pinSetup();
   Serial.begin(9600);
   RS485.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
-  setup_wifi();
+  // setup_wifi();
+
   client.setServer(mqtt_server, mqtt_port);
   client.setBufferSize(1024);
+  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+  wifiManager.addParameter(&custom_mqtt_server);
+  wifiManager.setSaveConfigCallback(saveConfigCallback);
+  wifiManager.setAPCallback(configModeCallback);
+  wifiManager.setConfigPortalTimeout(180);
+  bool res = wifiManager.autoConnect("ESP-Config", "123456789");
+  if (!res)
+  {
+    Serial.println("Failed to connect");
+    // ESP.restart();
+  }
+  else
+  {
+    // if you get here you have connected to the WiFi
+    Serial.println("connected...yeey :)");
+  }
 
   mqtt_connect();
   server.on("/", []()
@@ -236,31 +308,55 @@ void setup()
 
   ElegantOTA.begin(&server); // Start ElegantOTA
   server.begin();
- // Serial.println("HTTP server started");
+  // Serial.println("HTTP server started");
   mqtt_connect();
 
-  //Serial.println("[MQTT] Publishing...");
+  // Serial.println("[MQTT] Publishing...");
   if (client.publish(mqtt_topic, "Started"))
   {
-    ///Serial.println("[MQTT] Sent successfully.");
+    /// Serial.println("[MQTT] Sent successfully.");
   }
   else
   {
-   // Serial.println("[MQTT] Send failed!");
+    // Serial.println("[MQTT] Send failed!");
   }
+
+  Serial.printf("custom_mqtt_server : {0}",custom_mqtt_server.getValue());
 }
 
 // ======== LOOP ========
 void loop()
 {
+  checkButton();
+
+  if (WiFi.isConnected())
+  {
+    digitalWrite(2, LOW);
+  }
+  else
+  {
+    digitalWrite(2, HIGH);
+  }
+
   if (!client.connected())
+  {
     mqtt_connect();
+  digitalWrite(5, HIGH);
+  }
+  else
+  {
+     digitalWrite(5, LOW);
+  }
+    
+
+
   client.loop();
 
   if (millis() - lastRead > INTERVAL)
   {
     lastRead = millis();
     Serial.write(CMD_BMS, sizeof(CMD_BMS));
+  
     Serial.flush();
 
     uint8_t frame[512];
@@ -272,15 +368,17 @@ void loop()
       if (decodeAsciiHex(frame, framelen, payload, paylen))
       {
         parseAndPublish(payload, paylen);
+        toggleSerialLED();
+        toggleSRV();
       }
       else
       {
-        //Serial.println("[WARN] Invalid ASCII frame.");
+        // Serial.println("[WARN] Invalid ASCII frame.");
       }
     }
     else
     {
-      //Serial.println("[WARN] No response from BMS.");
+      // Serial.println("[WARN] No response from BMS.");
     }
   }
 
