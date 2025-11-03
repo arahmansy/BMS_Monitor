@@ -17,8 +17,8 @@ WiFiManager wifiManager;
 
 // JSON file hosted on GitHub (raw URL)
 const char* versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
-const char* currentVersion = "1.0.4";   // <-- change this each build
-
+const char* currentVersion = "1.0.5";   // <-- change this each build
+String cacheBuster = "?t=" + String(millis());
 
 
 // ==== NTP Server and Timezone ====
@@ -393,7 +393,7 @@ void performOTA(String url) {
 
 void checkForUpdates() {
   HTTPClient http;
-  http.begin(versionURL);
+  http.begin(versionURL + cacheBuster);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
@@ -432,8 +432,8 @@ void setup()
 
   client.setServer(mqtt_server, mqtt_port);
   client.setBufferSize(1024);
-  WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-  wifiManager.addParameter(&custom_mqtt_server);
+  //WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+  //wifiManager.addParameter(&custom_mqtt_server);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setConfigPortalTimeout(180);
