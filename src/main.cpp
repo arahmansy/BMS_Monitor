@@ -17,7 +17,7 @@ WiFiManager wifiManager;
 
 // JSON file hosted on GitHub (raw URL)
 const char* versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
-const char* currentVersion = "1.0.2";   // <-- change this each build
+const char* currentVersion = "1.0.4";   // <-- change this each build
 
 
 
