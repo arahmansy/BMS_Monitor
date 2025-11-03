@@ -1,3 +1,4 @@
+const char *currentVersion = "1.0.6"; // <-- change this each build
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -12,14 +13,12 @@
 const char *ssid = "Test";
 const char *password = "123456789";
 WiFiManager wifiManager;
-//const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
-
+// const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
 
 // JSON file hosted on GitHub (raw URL)
-const char* versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
-const char* currentVersion = "1.0.5";   // <-- change this each build
-String cacheBuster = "?t=" + String(millis());
+const char *versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
 
+String cacheBuster = "?t=" + String(millis());
 
 // ==== NTP Server and Timezone ====
 const char *ntpServer = "pool.ntp.org";
@@ -37,30 +36,6 @@ const char *mqtt_topic_state = "adnansy/bms/status/state"; // online/offline
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-
-// void updateFirmware()
-// {
-//   Serial.println("Start Update frimware....");
-//   HTTPClient http;
-//   http.begin(firmwareUrl);
-//   int httpCode = http.GET();
-//   printf("HTTP Code : {0}",httpCode);
-//   if (httpCode == HTTP_CODE_OK)
-//   {
-//     int len = http.getSize();
-//     WiFiClient *stream = http.getStreamPtr();
-//     if (Update.begin(len))
-//     {
-//       Update.writeStream(*stream);
-//       if (Update.end() && Update.isFinished())
-//       {
-//         Serial.println("✅ OTA Success! Rebooting...");
-//         ESP.restart();
-//       }
-//     }
-//   }
-//   http.end();
-// }
 
 
 String getDateTimeString()
@@ -269,6 +244,7 @@ void parseAndPublish(uint8_t *p, size_t len)
 
   // ======== JSON CREATION ========
   StaticJsonDocument<512> doc;
+  doc["version"]=currentVersion;
   doc["timestamp"] = getDateTimeString();
   doc["pack_voltage"] = pack_voltage;
   doc["pack_current"] = pack_current;
@@ -290,26 +266,10 @@ void parseAndPublish(uint8_t *p, size_t len)
   char jsonBuffer[512];
   size_t n = serializeJson(doc, jsonBuffer);
 
-  // Serial.println("[DATA]");
-  // Serial.println(jsonBuffer);
-
   mqtt_connect();
-  // Serial.println("[MQTT] Publishing...");
-
+ 
   bool ok = client.publish(mqtt_topic, jsonBuffer, n);
-  // Serial.println(ok ? "[MQTT] Sent OK ✅" : "[MQTT] Send failed ❌");
-  //  if (client.publish(mqtt_topic, jsonBuffer, n))
-  //  {
-  //    Serial.println("[MQTT] Sent successfully.");
-  //  }
-  //  else
-  //  {
-  //    Serial.println("[MQTT] Send failed!");
-  //  }
 
-  // Serial.print("Topic: ");
-  // Serial.println(mqtt_topic);
-  // Serial.println(jsonBuffer);
 }
 
 // ======== SETUP ========
@@ -356,75 +316,96 @@ void syncTime()
   }
 }
 
-
-void performOTA(String url) {
+void performOTA(String url)
+{
   WiFiClientSecure client;
   client.setInsecure(); // skip certificate validation (or use your own root CA)
 
   HTTPClient https;
   https.begin(client, url);
   int httpCode = https.GET();
-  if (httpCode == HTTP_CODE_OK) {
+  if (httpCode == HTTP_CODE_OK)
+  {
     int len = https.getSize();
-    WiFiClient * stream = https.getStreamPtr();
+    WiFiClient *stream = https.getStreamPtr();
 
-    if (Update.begin(len)) {
+    if (Update.begin(len))
+    {
       size_t written = Update.writeStream(*stream);
-      if (written == len) {
+      if (written == len)
+      {
         Serial.println("Firmware written successfully!");
-      } else {
+      }
+      else
+      {
         Serial.printf("Written %d/%d bytes\n", written, len);
       }
-      if (Update.end() && Update.isFinished()) {
+      if (Update.end() && Update.isFinished())
+      {
         Serial.println("✅ OTA complete! Rebooting...");
         ESP.restart();
-      } else {
+      }
+      else
+      {
         Serial.printf("❌ OTA error: %s\n", Update.errorString());
       }
-    } else {
+    }
+    else
+    {
       Serial.println("❌ Not enough space for OTA");
     }
-  } else {
+  }
+  else
+  {
     Serial.printf("❌ HTTP error: %d\n", httpCode);
   }
   https.end();
 }
 
-
-void checkForUpdates() {
+void checkForUpdates()
+{
   HTTPClient http;
+  http.addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  http.addHeader("Pragma", "no-cache");
+  http.addHeader("Expires", "0");
+
   http.begin(versionURL + cacheBuster);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK) {
+  if (httpCode == HTTP_CODE_OK)
+  {
     String payload = http.getString();
     StaticJsonDocument<512> doc;
     DeserializationError error = deserializeJson(doc, payload);
-    if (error) {
+    if (error)
+    {
       Serial.println("❌ JSON parse failed");
       return;
     }
     String latestVersion = doc["version"];
     String firmwareUrl = doc["url"];
     Serial.printf("Current version: %s | Latest: %s\n", currentVersion, latestVersion.c_str());
-    if (latestVersion != currentVersion) {
+    if (latestVersion != currentVersion)
+    {
       Serial.println("🟢 New version found! Starting OTA...");
       Serial.print("Get update from :");
       Serial.println(firmwareUrl);
       performOTA(firmwareUrl);
-    } else {
+    }
+    else
+    {
       Serial.println("✅ Firmware is up to date.");
     }
-  } else {
+  }
+  else
+  {
     Serial.printf("❌ Failed to fetch version.json, code: %d\n", httpCode);
   }
   http.end();
 }
 
-
 void setup()
 {
-  Serial.println("BMS Monitor V 1.2");
   pinSetup();
   Serial.begin(9600);
   RS485.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
@@ -432,8 +413,8 @@ void setup()
 
   client.setServer(mqtt_server, mqtt_port);
   client.setBufferSize(1024);
-  //WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
-  //wifiManager.addParameter(&custom_mqtt_server);
+  // WiFiManagerParameter custom_mqtt_server("server", "mqtt server", mqtt_server, 40);
+  // wifiManager.addParameter(&custom_mqtt_server);
   wifiManager.setSaveConfigCallback(saveConfigCallback);
   wifiManager.setAPCallback(configModeCallback);
   wifiManager.setConfigPortalTimeout(180);
@@ -470,7 +451,7 @@ void setup()
 
   syncTime();
   Serial.println(getDateTimeString());
-  ///updateFirmware();
+  /// updateFirmware();
 
   checkForUpdates();
 }
