@@ -3,12 +3,30 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <ElegantOTA.h>
+#include "time.h"
+#include <HTTPClient.h>
+
 #include <WiFiManager.h> //https://github.com/tzapu/WiFiManager WiFi Configuration Magic
 // ======== WIFI CONFIG ========
 #define TRIGGER_PIN 0
 const char *ssid = "Test";
 const char *password = "123456789";
 WiFiManager wifiManager;
+const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
+
+
+// JSON file hosted on GitHub (raw URL)
+const char* versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
+const char* currentVersion = "1.0.3";   // <-- change this each build
+
+
+
+// ==== NTP Server and Timezone ====
+const char *ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 2 * 3600; // GMT+2 (Lebanon)
+const int daylightOffset_sec = 0;    // no daylight saving
+unsigned long lastNtpSync = 0;
+const unsigned long RESYNC_INTERVAL = 6UL * 3600UL * 1000UL; // 6 hours in ms
 
 // ======== MQTT CONFIG ========
 const char *mqtt_server = "broker.hivemq.com";
@@ -19,6 +37,43 @@ const char *mqtt_topic_state = "adnansy/bms/status/state"; // online/offline
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+
+void updateFirmware()
+{
+  Serial.println("Start Update frimware....");
+  HTTPClient http;
+  http.begin(firmwareUrl);
+  int httpCode = http.GET();
+  printf("HTTP Code : {0}",httpCode);
+  if (httpCode == HTTP_CODE_OK)
+  {
+    int len = http.getSize();
+    WiFiClient *stream = http.getStreamPtr();
+    if (Update.begin(len))
+    {
+      Update.writeStream(*stream);
+      if (Update.end() && Update.isFinished())
+      {
+        Serial.println("✅ OTA Success! Rebooting...");
+        ESP.restart();
+      }
+    }
+  }
+  http.end();
+}
+String getDateTimeString()
+{
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    return "NTP Error";
+  }
+
+  char buffer[25];
+  strftime(buffer, sizeof(buffer), "%Y/%m/%d %H:%M:%S", &timeinfo);
+  return String(buffer);
+}
+
 void mqtt_connect()
 {
   while (!client.connected())
@@ -32,9 +87,9 @@ void mqtt_connect()
     }
     else
     {
-       Serial.print(" failed (rc=");
+      Serial.print(" failed (rc=");
       Serial.print(client.state());
-       Serial.println(") retrying in 3s");
+      Serial.println(") retrying in 3s");
       delay(3000);
     }
   }
@@ -67,7 +122,6 @@ void toggleSerialLED()
   delay(100);
   digitalWrite(4, HIGH);
 }
-
 
 void pinSetup()
 {
@@ -213,7 +267,7 @@ void parseAndPublish(uint8_t *p, size_t len)
 
   // ======== JSON CREATION ========
   StaticJsonDocument<512> doc;
-  doc["timestamp"] = millis();
+  doc["timestamp"] = getDateTimeString();
   doc["pack_voltage"] = pack_voltage;
   doc["pack_current"] = pack_current;
   doc["remain_Ah"] = remain_Ah;
@@ -276,8 +330,96 @@ void saveConfigCallback()
   shouldSaveConfig = true;
 }
 
+// ==== Function: Sync time with NTP ====
+void syncTime()
+{
+  Serial.println("⏳ Syncing time with NTP...");
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  struct tm timeinfo;
+  int retries = 0;
+  while (!getLocalTime(&timeinfo) && retries < 10)
+  {
+    Serial.print(".");
+    delay(1000);
+    retries++;
+  }
+  if (retries < 10)
+  {
+    Serial.println("\n✅ Time synced successfully!");
+    lastNtpSync = millis();
+  }
+  else
+  {
+    Serial.println("\n❌ Failed to sync time!");
+  }
+}
+
+
+void performOTA(String url) {
+  WiFiClientSecure client;
+  client.setInsecure(); // skip certificate validation (or use your own root CA)
+
+  HTTPClient https;
+  https.begin(client, url);
+  int httpCode = https.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    int len = https.getSize();
+    WiFiClient * stream = https.getStreamPtr();
+
+    if (Update.begin(len)) {
+      size_t written = Update.writeStream(*stream);
+      if (written == len) {
+        Serial.println("Firmware written successfully!");
+      } else {
+        Serial.printf("Written %d/%d bytes\n", written, len);
+      }
+      if (Update.end() && Update.isFinished()) {
+        Serial.println("✅ OTA complete! Rebooting...");
+        ESP.restart();
+      } else {
+        Serial.printf("❌ OTA error: %s\n", Update.errorString());
+      }
+    } else {
+      Serial.println("❌ Not enough space for OTA");
+    }
+  } else {
+    Serial.printf("❌ HTTP error: %d\n", httpCode);
+  }
+  https.end();
+}
+
+
+void checkForUpdates() {
+  HTTPClient http;
+  http.begin(versionURL);
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    if (error) {
+      Serial.println("❌ JSON parse failed");
+      return;
+    }
+    String latestVersion = doc["version"];
+    String firmwareUrl = doc["url"];
+    Serial.printf("Current version: %s | Latest: %s\n", currentVersion, latestVersion.c_str());
+    if (latestVersion != currentVersion) {
+      Serial.println("🟢 New version found! Starting OTA...");
+      performOTA(firmwareUrl);
+    } else {
+      Serial.println("✅ Firmware is up to date.");
+    }
+  } else {
+    Serial.printf("❌ Failed to fetch version.json, code: %d\n", httpCode);
+  }
+  http.end();
+}
+
+
 void setup()
 {
+  Serial.println("BMS Monitor V 1.2");
   pinSetup();
   Serial.begin(9600);
   RS485.begin(BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
@@ -293,13 +435,13 @@ void setup()
   bool res = wifiManager.autoConnect("ESP-Config", "123456789");
   if (!res)
   {
-    Serial.println("Failed to connect");
-    // ESP.restart();
+    // Serial.println("Failed to connect");
+    //  ESP.restart();
   }
   else
   {
     // if you get here you have connected to the WiFi
-    Serial.println("connected...yeey :)");
+    // Serial.println("connected...yeey :)");
   }
 
   mqtt_connect();
@@ -321,12 +463,21 @@ void setup()
     // Serial.println("[MQTT] Send failed!");
   }
 
-  Serial.printf("custom_mqtt_server : {0}",custom_mqtt_server.getValue());
+  syncTime();
+  Serial.println(getDateTimeString());
+  ///updateFirmware();
+
+  checkForUpdates();
 }
 
 // ======== LOOP ========
 void loop()
 {
+  if (millis() - lastNtpSync > RESYNC_INTERVAL)
+  {
+    syncTime();
+  }
+
   checkButton();
 
   if (WiFi.isConnected())
@@ -341,14 +492,12 @@ void loop()
   if (!client.connected())
   {
     mqtt_connect();
-  digitalWrite(5, HIGH);
+    digitalWrite(5, HIGH);
   }
   else
   {
-     digitalWrite(5, LOW);
+    digitalWrite(5, LOW);
   }
-    
-
 
   client.loop();
 
@@ -356,7 +505,7 @@ void loop()
   {
     lastRead = millis();
     Serial.write(CMD_BMS, sizeof(CMD_BMS));
-  
+
     Serial.flush();
 
     uint8_t frame[512];
