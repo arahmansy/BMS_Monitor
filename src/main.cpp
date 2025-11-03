@@ -12,12 +12,12 @@
 const char *ssid = "Test";
 const char *password = "123456789";
 WiFiManager wifiManager;
-const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
+//const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
 
 
 // JSON file hosted on GitHub (raw URL)
 const char* versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
-const char* currentVersion = "1.0.3";   // <-- change this each build
+const char* currentVersion = "1.0.2";   // <-- change this each build
 
 
 
@@ -38,29 +38,31 @@ const char *mqtt_topic_state = "adnansy/bms/status/state"; // online/offline
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-void updateFirmware()
-{
-  Serial.println("Start Update frimware....");
-  HTTPClient http;
-  http.begin(firmwareUrl);
-  int httpCode = http.GET();
-  printf("HTTP Code : {0}",httpCode);
-  if (httpCode == HTTP_CODE_OK)
-  {
-    int len = http.getSize();
-    WiFiClient *stream = http.getStreamPtr();
-    if (Update.begin(len))
-    {
-      Update.writeStream(*stream);
-      if (Update.end() && Update.isFinished())
-      {
-        Serial.println("✅ OTA Success! Rebooting...");
-        ESP.restart();
-      }
-    }
-  }
-  http.end();
-}
+// void updateFirmware()
+// {
+//   Serial.println("Start Update frimware....");
+//   HTTPClient http;
+//   http.begin(firmwareUrl);
+//   int httpCode = http.GET();
+//   printf("HTTP Code : {0}",httpCode);
+//   if (httpCode == HTTP_CODE_OK)
+//   {
+//     int len = http.getSize();
+//     WiFiClient *stream = http.getStreamPtr();
+//     if (Update.begin(len))
+//     {
+//       Update.writeStream(*stream);
+//       if (Update.end() && Update.isFinished())
+//       {
+//         Serial.println("✅ OTA Success! Rebooting...");
+//         ESP.restart();
+//       }
+//     }
+//   }
+//   http.end();
+// }
+
+
 String getDateTimeString()
 {
   struct tm timeinfo;
@@ -392,6 +394,7 @@ void performOTA(String url) {
 void checkForUpdates() {
   HTTPClient http;
   http.begin(versionURL);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   int httpCode = http.GET();
   if (httpCode == HTTP_CODE_OK) {
     String payload = http.getString();
@@ -406,6 +409,8 @@ void checkForUpdates() {
     Serial.printf("Current version: %s | Latest: %s\n", currentVersion, latestVersion.c_str());
     if (latestVersion != currentVersion) {
       Serial.println("🟢 New version found! Starting OTA...");
+      Serial.print("Get update from :");
+      Serial.println(firmwareUrl);
       performOTA(firmwareUrl);
     } else {
       Serial.println("✅ Firmware is up to date.");
