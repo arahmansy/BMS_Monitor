@@ -1,4 +1,4 @@
-const char *currentVersion = "1.0.6"; // <-- change this each build
+const char *currentVersion = "1.0.7"; // <-- change this each build
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -13,9 +13,12 @@ const char *currentVersion = "1.0.6"; // <-- change this each build
 const char *ssid = "Test";
 const char *password = "123456789";
 WiFiManager wifiManager;
-// const char *firmwareUrl = "https://github.com/arahmansy/BMS_Monitor/releases/download/v1.0.1/firmware.bin";
 
-// JSON file hosted on GitHub (raw URL)
+/// update version strategy 
+// ========== TIMING ==========
+unsigned long lastUpdateCheck = 0;
+const unsigned long updateInterval = 3600000UL;  // 1 hour = 3600000 ms
+
 const char *versionURL = "https://raw.githubusercontent.com/arahmansy/BMS_Monitor/main/version.json";
 
 String cacheBuster = "?t=" + String(millis());
@@ -459,6 +462,14 @@ void setup()
 // ======== LOOP ========
 void loop()
 {
+
+
+   if (millis() - lastUpdateCheck >= updateInterval) {
+    lastUpdateCheck = millis();
+    checkForUpdates();
+  }
+
+
   if (millis() - lastNtpSync > RESYNC_INTERVAL)
   {
     syncTime();
