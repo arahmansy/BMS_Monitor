@@ -1,4 +1,4 @@
-const char *currentVersion = "1.0.7"; // <-- change this each build
+const char *currentVersion = "1.0.8"; // <-- change this each build
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
